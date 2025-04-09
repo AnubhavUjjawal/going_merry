@@ -4,7 +4,7 @@ const std = @import("std");
 /// algorithm. It provides methods to encode and decode bencoded data.
 /// https://www.bittorrent.org/beps/bep_0003.html
 pub const Bencoder = struct {
-    const DatatypeTag = enum {
+    pub const DatatypeTag = enum {
         str,
         int,
         list,
@@ -19,17 +19,29 @@ pub const Bencoder = struct {
         InvalidCharacter,
     };
 
-    const StringHashMap = std.hash_map.StringHashMap(Datatype);
+    const StringHashMap = std.hash_map.StringHashMap(Data);
 
-    const Datatype = union(DatatypeTag) {
+    pub const Data = union(DatatypeTag) {
+        /// Strings are length-prefixed base ten followed by a colon and the string.
+        /// For example 4:spam corresponds to 'spam'.
         str: []const u8,
+        /// Integers are represented by an 'i' followed by the number in base 10 followed by an 'e'.
+        /// For example i3e corresponds to 3 and i-3e corresponds to -3.
+        /// Integers have no size limitation. i-0e is invalid. All encodings with a leading zero,
+        /// such as i03e, are invalid, other than i0e, which of course corresponds to 0.
         int: i128,
-        list: []const Datatype,
+        /// Lists are encoded as an 'l' followed by their elements (also bencoded) followed by an 'e'.
+        /// For example l4:spam4:eggse corresponds to ['spam', 'eggs'].
+        list: []const Data,
+        /// Dictionaries are encoded as a 'd' followed by a list of alternating keys and their
+        /// corresponding values followed by an 'e'. For example, d3:cow3:moo4:spam4:eggse corresponds to
+        /// {'cow': 'moo', 'spam': 'eggs'} and d4:spaml1:a1:bee corresponds to {'spam': ['a', 'b']}.
+        /// Keys must be strings and appear in sorted order (sorted as raw strings, not alphanumerics).
         dict: StringHashMap,
     };
 
-    const DecodeResult = struct {
-        result: Datatype,
+    pub const Decoded = struct {
+        result: Data,
         parsed_till: usize,
     };
 
@@ -41,10 +53,11 @@ pub const Bencoder = struct {
             .allocator = allocator,
         };
     }
+    // TODO: create deinit for clearing memory cleanly when done;
 
     // TODO: Use logger for properly logging this
     // TODO: make it better, this prints very awkwardly.
-    pub fn print(self: *const Self, value: Datatype) void {
+    pub fn print(self: *const Self, value: Data) void {
         switch (value) {
             .str => |v| std.debug.print("{s} \n", .{v}),
             .int => |v| std.debug.print("{d} \n", .{v}),
@@ -71,7 +84,7 @@ pub const Bencoder = struct {
     }
 
     /// It is upto the caller to free the memory
-    pub fn encode(self: *const Self, value: Datatype) BencoderErrors![]const u8 {
+    pub fn encode(self: *const Self, value: Data) BencoderErrors![]const u8 {
         switch (value) {
             .str => |v| return encodeStr(self, v),
             .int => |v| return encodeInt(self, v),
@@ -91,7 +104,7 @@ pub const Bencoder = struct {
         return std.fmt.allocPrint(self.allocator, "i{d}e", .{num});
     }
 
-    fn encodeList(self: *const Self, list: []const Datatype) BencoderErrors![]const u8 {
+    fn encodeList(self: *const Self, list: []const Data) BencoderErrors![]const u8 {
         var current_encoded_string: []u8 = try self.allocator.alloc(u8, 0);
 
         for (list) |item| {
@@ -150,7 +163,7 @@ pub const Bencoder = struct {
 
     /// It is upto the caller to free the memory
     /// We throw errors in cases of invalid strings passed
-    pub fn decode(self: *const Self, str: []const u8) BencoderErrors!DecodeResult {
+    pub fn decode(self: *const Self, str: []const u8) BencoderErrors!Decoded {
         if (str.len < 3) {
             return BencoderErrors.InvalidStr;
         }
@@ -168,17 +181,17 @@ pub const Bencoder = struct {
     }
 
     /// Currently ignores certain illegal statuses such as leading zeroes etc.
-    fn decodeInt(_: *const Self, str: []const u8) BencoderErrors!DecodeResult {
+    fn decodeInt(_: *const Self, str: []const u8) BencoderErrors!Decoded {
         // integers start with i and end with e
         // We need to find the first e
         const idx = std.mem.indexOf(u8, str, "e") orelse return BencoderErrors.InvalidStr;
         const parsed = try std.fmt.parseInt(i128, str[1..idx], 10);
-        return DecodeResult{ .result = Datatype{ .int = parsed }, .parsed_till = idx };
+        return Decoded{ .result = Data{ .int = parsed }, .parsed_till = idx };
     }
 
-    fn decodeList(self: *const Self, str: []const u8) BencoderErrors!DecodeResult {
+    fn decodeList(self: *const Self, str: []const u8) BencoderErrors!Decoded {
         // We need to go through every item in the list, starting from 2nd character.
-        var items = std.ArrayList(Datatype).init(self.allocator);
+        var items = std.ArrayList(Data).init(self.allocator);
         defer items.deinit();
 
         var idx: usize = 1;
@@ -193,10 +206,10 @@ pub const Bencoder = struct {
             idx += 1 + data.parsed_till;
             try items.append(data.result);
         }
-        return DecodeResult{ .result = Datatype{ .list = try items.toOwnedSlice() }, .parsed_till = idx };
+        return Decoded{ .result = Data{ .list = try items.toOwnedSlice() }, .parsed_till = idx };
     }
 
-    fn decodeDict(self: *const Self, str: []const u8) BencoderErrors!DecodeResult {
+    fn decodeDict(self: *const Self, str: []const u8) BencoderErrors!Decoded {
         var dict = StringHashMap.init(self.allocator);
         // dict has alternating key value pairs
         var idx: usize = 1;
@@ -208,14 +221,13 @@ pub const Bencoder = struct {
             idx += 1 + key.parsed_till;
             const value = try self.decode(str[idx..]);
             idx += 1 + value.parsed_till;
-            std.debug.print("dict key: {s}\n", .{key.result.str});
             try dict.put(key.result.str, value.result);
         }
 
-        return DecodeResult{ .parsed_till = idx, .result = Datatype{ .dict = dict } };
+        return Decoded{ .parsed_till = idx, .result = Data{ .dict = dict } };
     }
 
-    fn decodeStr(_: *const Self, str: []const u8) BencoderErrors!DecodeResult {
+    fn decodeStr(_: *const Self, str: []const u8) BencoderErrors!Decoded {
         // split the str by the first :
         const idx = std.mem.indexOf(u8, str, ":") orelse return BencoderErrors.InvalidStr;
 
@@ -225,7 +237,7 @@ pub const Bencoder = struct {
         const start_idx = idx + 1;
         const end_idx = (idx + 1 + @as(usize, @intCast(size)));
         const parsed = str[start_idx..end_idx];
-        return DecodeResult{ .result = Datatype{ .str = parsed }, .parsed_till = end_idx - 1 };
+        return Decoded{ .result = Data{ .str = parsed }, .parsed_till = end_idx - 1 };
     }
 };
 
@@ -233,47 +245,47 @@ test "Bencoder decodeList" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
     const to_decode = "li420ei-69e4:spame";
-    const result = try bencoder.decode(to_decode);
-    defer allocator.free(result.result.list);
-    try std.testing.expectEqual(420, result.result.list[0].int);
-    try std.testing.expectEqual(-69, result.result.list[1].int);
-    try std.testing.expectEqualStrings("spam", result.result.list[2].str);
+    const decoded = try bencoder.decode(to_decode);
+    defer allocator.free(decoded.result.list);
+    try std.testing.expectEqual(420, decoded.result.list[0].int);
+    try std.testing.expectEqual(-69, decoded.result.list[1].int);
+    try std.testing.expectEqualStrings("spam", decoded.result.list[2].str);
 }
 
 test "Bencoder decodeList list of lists" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
     const to_decode = "li420eli420ei-69e4:spame4:eggse";
-    const result = try bencoder.decode(to_decode);
-    defer allocator.free(result.result.list);
-    defer allocator.free(result.result.list[1].list);
-    try std.testing.expectEqual(420, result.result.list[0].int);
+    const decoded = try bencoder.decode(to_decode);
+    defer allocator.free(decoded.result.list);
+    defer allocator.free(decoded.result.list[1].list);
+    try std.testing.expectEqual(420, decoded.result.list[0].int);
 
     // list of list assertions
-    try std.testing.expectEqual(420, result.result.list[1].list[0].int);
-    try std.testing.expectEqual(-69, result.result.list[1].list[1].int);
-    try std.testing.expectEqualStrings("spam", result.result.list[1].list[2].str);
+    try std.testing.expectEqual(420, decoded.result.list[1].list[0].int);
+    try std.testing.expectEqual(-69, decoded.result.list[1].list[1].int);
+    try std.testing.expectEqualStrings("spam", decoded.result.list[1].list[2].str);
 
-    try std.testing.expectEqualStrings("eggs", result.result.list[2].str);
+    try std.testing.expectEqualStrings("eggs", decoded.result.list[2].str);
 }
 
 test "Bencoder decodeDict" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
     const to_decode = "d4:key15:valu14:key2i123e4:key3i-123e4:key4l1:a1:bl1:c3:def1:gi1ei234ei-420eeee";
-    var result = try bencoder.decode(to_decode);
-    defer result.result.dict.deinit();
-    const list_data = result.result.dict.get("key4") orelse unreachable;
+    var decoded = try bencoder.decode(to_decode);
+    defer decoded.result.dict.deinit();
+    const list_data = decoded.result.dict.get("key4") orelse unreachable;
     defer allocator.free(list_data.list);
     defer allocator.free(list_data.list[2].list);
 
-    const key1_value = result.result.dict.get("key1") orelse unreachable;
+    const key1_value = decoded.result.dict.get("key1") orelse unreachable;
     try std.testing.expectEqualStrings("valu1", key1_value.str);
 
-    const key2_value = result.result.dict.get("key2") orelse unreachable;
+    const key2_value = decoded.result.dict.get("key2") orelse unreachable;
     try std.testing.expectEqual(123, key2_value.int);
 
-    const key3_value = result.result.dict.get("key3") orelse unreachable;
+    const key3_value = decoded.result.dict.get("key3") orelse unreachable;
     try std.testing.expectEqual(-123, key3_value.int);
 
     // TODO: more expects
@@ -283,31 +295,31 @@ test "Bencoder decodeStr" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
     const to_decode = "4:spam";
-    const result = try bencoder.decode(to_decode);
-    try std.testing.expectEqualStrings("spam", result.result.str);
+    const decoded = try bencoder.decode(to_decode);
+    try std.testing.expectEqualStrings("spam", decoded.result.str);
 }
 
 test "Bencoder decodeInt positive" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
     const to_decode = "i420e";
-    const result = try bencoder.decode(to_decode);
-    try std.testing.expectEqual(420, result.result.int);
+    const decoded = try bencoder.decode(to_decode);
+    try std.testing.expectEqual(420, decoded.result.int);
 }
 
 test "Bencoder decodeInt negative" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
-    const to_decode = "i-420e";
-    const result = try bencoder.decode(to_decode);
+    const decoded = "i-420e";
+    const result = try bencoder.decode(decoded);
     try std.testing.expectEqual(-420, result.result.int);
 }
 
 test "Bencoder decodeInt zero" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
-    const to_decode = "i0e";
-    const result = try bencoder.decode(to_decode);
+    const decoded = "i0e";
+    const result = try bencoder.decode(decoded);
     try std.testing.expectEqual(0, result.result.int);
 }
 
@@ -355,10 +367,10 @@ test "Bencoder encodeList" {
     const allocator = std.testing.allocator;
     const bencoder = Bencoder.init(allocator);
 
-    const to_encode = [_]Bencoder.Datatype{
+    const to_encode = [_]Bencoder.Data{
         .{ .int = 420 },
         .{ .str = "spam" },
-        .{ .list = &[_]Bencoder.Datatype{ .{ .str = "spun" }, .{ .str = "eggs" } } },
+        .{ .list = &[_]Bencoder.Data{ .{ .str = "spun" }, .{ .str = "eggs" } } },
         .{ .int = 69 },
     };
 
@@ -376,13 +388,13 @@ test "Bencoder encodeDict" {
     try hashMap.put("cow1", .{ .str = "moo1" });
     try hashMap.put("spam", .{ .str = "eggs" });
     try hashMap.put("cow2", .{ .str = "moo2" });
-    try hashMap.put("list", .{ .list = &[_]Bencoder.Datatype{
+    try hashMap.put("list", .{ .list = &[_]Bencoder.Data{
         .{ .int = 420 },
         .{ .str = "spam" },
-        .{ .list = &[_]Bencoder.Datatype{ .{ .str = "spun" }, .{ .str = "eggs" } } },
+        .{ .list = &[_]Bencoder.Data{ .{ .str = "spun" }, .{ .str = "eggs" } } },
         .{ .int = 69 },
     } });
-    const to_encode = Bencoder.Datatype{ .dict = hashMap };
+    const to_encode = Bencoder.Data{ .dict = hashMap };
 
     const result = try bencoder.encode(to_encode);
     defer allocator.free(result);

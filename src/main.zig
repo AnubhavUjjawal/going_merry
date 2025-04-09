@@ -20,16 +20,3 @@ pub fn main() !void {
 
     try bw.flush(); // Don't forget to flush!
 }
-
-// test "simple test reading a torrent file" {
-//     const allocator = std.testing.allocator;
-
-//     const one_mb: usize = 1000000;
-//     const dir = std.fs.cwd();
-//     const data = try dir.readFileAlloc(allocator, "samples/big-buck-bunny.torrent", one_mb);
-
-//     const bencoder = bencode.Bencoder.init(allocator);
-
-//     const parsed_data = try bencoder.decode(data);
-//     // bencoder.print(parsed_data.result);
-// }
