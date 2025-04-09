@@ -3,6 +3,7 @@
 //! is to delete this file and start with root.zig instead.
 
 const std = @import("std");
+const bencode = @import("bencode.zig");
 
 pub fn main() !void {
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
@@ -20,9 +21,15 @@ pub fn main() !void {
     try bw.flush(); // Don't forget to flush!
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
+// test "simple test reading a torrent file" {
+//     const allocator = std.testing.allocator;
+
+//     const one_mb: usize = 1000000;
+//     const dir = std.fs.cwd();
+//     const data = try dir.readFileAlloc(allocator, "samples/big-buck-bunny.torrent", one_mb);
+
+//     const bencoder = bencode.Bencoder.init(allocator);
+
+//     const parsed_data = try bencoder.decode(data);
+//     // bencoder.print(parsed_data.result);
+// }
