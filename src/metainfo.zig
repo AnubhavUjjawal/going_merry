@@ -69,9 +69,7 @@ pub const Manager = struct {
     }
 
     pub fn getMetaInfoFromStr(self: *Self, content: []const u8) !MetaInfo {
-        var bencoder = bencode.Bencoder.init(self.allocator);
-        defer bencoder.deinit();
-        const decoded = try bencoder.decode(content);
+        const decoded = try self.bencoder.decode(content);
 
         return try self.getMetaInfoFromDecodeResult(content, decoded);
     }
@@ -129,19 +127,76 @@ pub const Manager = struct {
 
         return metainfo.*;
     }
+
+    pub fn bencodeMetaInfoInfo(self: *Self, metainfo: MetaInfo) ![]const u8 {
+        var data = std.StringHashMap(bencode.Bencoder.Data).init(self.allocator);
+        defer data.deinit();
+
+        var multiple_files = std.ArrayList(bencode.Bencoder.Data).init(self.allocator);
+        defer multiple_files.deinit();
+
+        try data.put("name", .{ .str = metainfo.info.name });
+        try data.put("piece length", .{ .int = metainfo.info.piece_length });
+        try data.put("pieces", .{ .str = metainfo.info.pieces });
+
+        switch (metainfo.info.contents) {
+            .single_file => |v| {
+                try data.put("length", .{ .int = v.length });
+            },
+            .multiple_files => |v| {
+                for (v) |file| {
+                    var file_data = std.StringHashMap(bencode.Bencoder.Data).init(self.allocator);
+                    try file_data.put("length", .{ .int = file.length });
+
+                    var paths = std.ArrayList(bencode.Bencoder.Data).init(self.allocator);
+
+                    for (file.path) |p| {
+                        try paths.append(.{ .str = p });
+                    }
+
+                    try file_data.put("path", .{ .list = try paths.toOwnedSlice() });
+                    try multiple_files.append(.{ .dict = file_data });
+                }
+                try data.put("files", .{ .list = multiple_files.items });
+            },
+        }
+
+        const encoded = try self.bencoder.encode(.{ .dict = data });
+
+        std.debug.print("{s}\n", .{encoded});
+
+        // clear allocated memory lol. We did a lot of allocations for multiple files
+        for (multiple_files.items) |*file| {
+            switch (file.*) {
+                .dict => |*v| {
+                    defer v.*.deinit();
+                    const path = v.*.get("path").?.list;
+                    self.allocator.free(path);
+                },
+                else => unreachable,
+            }
+        }
+
+        return encoded;
+    }
+
     memory_tracker: std.ArrayList(*MetaInfo),
     allocator: std.mem.Allocator,
+    bencoder: bencode.Bencoder,
 
     pub fn init(allocator: std.mem.Allocator) Self {
         const tracker = std.ArrayList(*MetaInfo).init(allocator);
+        const bencoder = bencode.Bencoder.init(allocator);
         return .{
             .memory_tracker = tracker,
             .allocator = allocator,
+            .bencoder = bencoder,
         };
     }
 
     pub fn deinit(self: *Self) void {
         defer self.memory_tracker.deinit();
+        defer self.bencoder.deinit();
 
         for (self.memory_tracker.items) |item| {
             self.allocator.destroy(item);
@@ -160,13 +215,17 @@ pub const Manager = struct {
     }
 };
 
-test "simple test reading a torrent file" {
+test "sanity test reading a torrent file" {
     const allocator = std.testing.allocator;
     const path: []const u8 = "samples/big-buck-bunny.torrent";
     var manager = Manager.init(allocator);
     defer manager.deinit();
 
-    _ = try manager.getMetaInfoFromPath(path);
+    const metainfo = try manager.getMetaInfoFromPath(path);
     // const stdout = std.io.getStdOut().writer();
-    // try std.json.stringify(contents, .{}, stdout);
+    // try std.json.stringify(metainfo, .{}, stdout);
+
+    _ = try manager.bencodeMetaInfoInfo(metainfo);
+
+    // TODO: match the bencoded info
 }
