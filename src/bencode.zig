@@ -14,7 +14,7 @@ pub const Bencoder = struct {
         dict,
     };
 
-    const BencoderErrors = error{
+    const Errors = error{
         AllocPrintError,
         OutOfMemory,
         InvalidStr,
@@ -120,7 +120,7 @@ pub const Bencoder = struct {
         }
     }
 
-    pub fn encode(self: *Self, value: Data) BencoderErrors![]const u8 {
+    pub fn encode(self: *Self, value: Data) Errors![]const u8 {
         switch (value) {
             .str => |v| return encodeStr(self, v),
             .int => |v| return encodeInt(self, v),
@@ -129,7 +129,7 @@ pub const Bencoder = struct {
         }
     }
 
-    fn encodeStr(self: *Self, str: []const u8) BencoderErrors![]const u8 {
+    fn encodeStr(self: *Self, str: []const u8) Errors![]const u8 {
         const len = str.len;
         const encoded = try std.fmt.allocPrint(self.allocator, "{d}:{s}", .{ len, str });
 
@@ -139,13 +139,13 @@ pub const Bencoder = struct {
 
     // Integers in bencoding have no size limit, but we have to
     // use a fixed size for the encoding. We will use 128 bits
-    fn encodeInt(self: *Self, num: i128) BencoderErrors![]const u8 {
+    fn encodeInt(self: *Self, num: i128) Errors![]const u8 {
         const encoded = try std.fmt.allocPrint(self.allocator, "i{d}e", .{num});
         try self.encode_tracker.append(encoded);
         return encoded;
     }
 
-    fn encodeList(self: *Self, list: []const Data) BencoderErrors![]const u8 {
+    fn encodeList(self: *Self, list: []const Data) Errors![]const u8 {
         var current_encoded_string: []u8 = try self.allocator.alloc(u8, 0);
 
         for (list) |item| {
@@ -163,7 +163,7 @@ pub const Bencoder = struct {
         return final_encoded_string;
     }
 
-    fn encodeDict(self: *Self, dict: StringHashMap) BencoderErrors![]const u8 {
+    fn encodeDict(self: *Self, dict: StringHashMap) Errors![]const u8 {
         // keys must be string and appear in sorted order
         var keys: [][]const u8 = try self.allocator.alloc([]const u8, dict.count());
         defer self.allocator.free(keys);
@@ -205,9 +205,9 @@ pub const Bencoder = struct {
 
     /// It is upto the caller to free the memory
     /// We throw errors in cases of invalid strings passed
-    pub fn decode(self: *Self, str: []const u8) BencoderErrors!Decoded {
+    pub fn decode(self: *Self, str: []const u8) Errors!Decoded {
         if (str.len < 3) {
-            return BencoderErrors.InvalidStr;
+            return Errors.InvalidStr;
         }
         if (str[0] == 'i') {
             return self.decodeInt(str);
@@ -223,10 +223,10 @@ pub const Bencoder = struct {
     }
 
     /// Currently ignores certain illegal statuses such as leading zeroes etc.
-    fn decodeInt(self: *Self, str: []const u8) BencoderErrors!Decoded {
+    fn decodeInt(self: *Self, str: []const u8) Errors!Decoded {
         // integers start with i and end with e
         // We need to find the first e
-        const idx = std.mem.indexOf(u8, str, "e") orelse return BencoderErrors.InvalidStr;
+        const idx = std.mem.indexOf(u8, str, "e") orelse return Errors.InvalidStr;
         const parsed = try std.fmt.parseInt(i128, str[1..idx], 10);
 
         const result = try self.allocator.create(Data);
@@ -241,7 +241,7 @@ pub const Bencoder = struct {
         return decoded.*;
     }
 
-    fn decodeList(self: *Self, str: []const u8) BencoderErrors!Decoded {
+    fn decodeList(self: *Self, str: []const u8) Errors!Decoded {
         // We need to go through every item in the list, starting from 2nd character.
         var items = std.ArrayList(Data).init(self.allocator);
         defer items.deinit();
@@ -274,7 +274,7 @@ pub const Bencoder = struct {
         return decoded.*;
     }
 
-    fn decodeDict(self: *Self, str: []const u8) BencoderErrors!Decoded {
+    fn decodeDict(self: *Self, str: []const u8) Errors!Decoded {
         var dict = StringHashMap.init(self.allocator);
         // dict has alternating key value pairs
         var idx: usize = 1;
@@ -303,9 +303,9 @@ pub const Bencoder = struct {
         return decoded.*;
     }
 
-    fn decodeStr(self: *Self, str: []const u8) BencoderErrors!Decoded {
+    fn decodeStr(self: *Self, str: []const u8) Errors!Decoded {
         // split the str by the first :
-        const idx = std.mem.indexOf(u8, str, ":") orelse return BencoderErrors.InvalidStr;
+        const idx = std.mem.indexOf(u8, str, ":") orelse return Errors.InvalidStr;
 
         // cast from 0..idx to a number, that is the length of the string
         const size = try std.fmt.parseInt(i32, str[0..idx], 10);

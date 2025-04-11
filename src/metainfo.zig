@@ -1,8 +1,6 @@
 const std = @import("std");
 const bencode = @import("bencode.zig");
 
-const Allocator = std.mem.Allocator;
-
 pub const Manager = struct {
     const Self = @This();
     pub const MetaInfo = struct {
@@ -31,6 +29,16 @@ pub const Manager = struct {
             /// maps to a string whose length is a multiple of 20. It is to be subdivided into strings of length 20,
             /// each of which is the SHA1 hash of the piece at the corresponding index.
             pieces: []const u8,
+
+            /// private: (optional) this field is an integer. If it is set to "1", the client MUST publish its presence
+            /// to get other peers ONLY via the trackers explicitly described in the metainfo file. If this field is set
+            ///  to "0" or is not present, the client may obtain peer from other means, e.g. PEX peer exchange, dht.
+            /// Here, "private" may be read as "no external peer source".
+            ///
+            /// NOTE: There is much debate surrounding private trackers.
+            /// The official request for a specification change is here.
+            /// Azureus was the first client to respect private trackers, see their wiki for more details.
+            private: ?i128,
 
             contents: Contents,
 
@@ -112,6 +120,14 @@ pub const Manager = struct {
                 .multiple_files = try multiple_files.toOwnedSlice(),
             };
         }
+
+        const private = info.dict.get("private");
+        var private_int: ?i128 = null;
+
+        if (private != null) {
+            private_int = private.?.int;
+        }
+
         const metainfo = try self.allocator.create(MetaInfo);
         try self.memory_tracker.append(metainfo);
         metainfo.* = MetaInfo{
@@ -122,6 +138,7 @@ pub const Manager = struct {
                 .pieces = pieces.str,
                 .piece_length = piece_length.int,
                 .contents = contents.?,
+                .private = private_int,
             },
         };
 
@@ -138,6 +155,10 @@ pub const Manager = struct {
         try data.put("name", .{ .str = metainfo.info.name });
         try data.put("piece length", .{ .int = metainfo.info.piece_length });
         try data.put("pieces", .{ .str = metainfo.info.pieces });
+
+        if (metainfo.info.private != null) {
+            try data.put("private", .{ .int = metainfo.info.private.? });
+        }
 
         switch (metainfo.info.contents) {
             .single_file => |v| {
@@ -160,10 +181,7 @@ pub const Manager = struct {
                 try data.put("files", .{ .list = multiple_files.items });
             },
         }
-
         const encoded = try self.bencoder.encode(.{ .dict = data });
-
-        std.debug.print("{s}\n", .{encoded});
 
         // clear allocated memory lol. We did a lot of allocations for multiple files
         for (multiple_files.items) |*file| {
@@ -199,9 +217,8 @@ pub const Manager = struct {
         defer self.bencoder.deinit();
 
         for (self.memory_tracker.items) |item| {
-            self.allocator.destroy(item);
-            self.allocator.free(item._raw_content);
-
+            defer self.allocator.destroy(item);
+            defer self.allocator.free(item._raw_content);
             switch (item.info.contents) {
                 .multiple_files => |v| {
                     for (v) |file| {
@@ -215,17 +232,35 @@ pub const Manager = struct {
     }
 };
 
-test "sanity test reading a torrent file" {
+test "sanity test reading a single file torrent file " {
+    const allocator = std.testing.allocator;
+    // const path: []const u8 = "samples/big-buck-bunny.torrent";
+    const path = "samples/ubuntu-24.10-desktop-amd64.iso.torrent";
+    var manager = Manager.init(allocator);
+    defer manager.deinit();
+
+    const metainfo = try manager.getMetaInfoFromPath(path);
+
+    _ = try manager.bencodeMetaInfoInfo(metainfo);
+
+    // const stdout = std.io.getStdOut().writer();
+    // try std.json.stringify(metainfo, .{}, stdout);
+
+    // TODO: match the bencoded info
+}
+
+test "sanity test reading a multiple files torrent file " {
     const allocator = std.testing.allocator;
     const path: []const u8 = "samples/big-buck-bunny.torrent";
     var manager = Manager.init(allocator);
     defer manager.deinit();
 
     const metainfo = try manager.getMetaInfoFromPath(path);
-    // const stdout = std.io.getStdOut().writer();
-    // try std.json.stringify(metainfo, .{}, stdout);
 
     _ = try manager.bencodeMetaInfoInfo(metainfo);
+
+    // const stdout = std.io.getStdOut().writer();
+    // try std.json.stringify(metainfo, .{}, stdout);
 
     // TODO: match the bencoded info
 }
