@@ -1,4 +1,5 @@
 const std = @import("std");
+const xev = @import("xev");
 const interface = @import("interface.zig");
 const udp = @import("udp.zig");
 
@@ -31,13 +32,23 @@ pub const Factory = struct {
         }
     }
 
-    pub fn get(self: *Self, typ: Type) Errors!interface.Tracker {
+    pub fn get(
+        self: *Self,
+        typ: Type,
+        callback: interface.Tracker.AnnounceFunctionCallback,
+        /// NOTE: Currently we do not support multiple event queue implementations,
+        /// in the future however, we would like to support them.
+        event_loop: *xev.Loop,
+    ) Errors!interface.Tracker {
         switch (typ) {
             .udp => {
                 var instance = try self.allocator.create(udp.Tracker);
                 try self.udp_trackers.append(instance);
 
-                instance.* = .{};
+                instance.* = .{
+                    .announceCallback = callback,
+                    .event_loop = event_loop,
+                };
                 return instance.adapt();
             },
             else => {
@@ -48,11 +59,20 @@ pub const Factory = struct {
     }
 };
 
+/// to be only used for factory testing purposes
+fn logAnnounceCb(data: interface.Tracker.AnnounceResponse) anyerror!void {
+    log.info("got data back {any}", .{data});
+}
+
 test "return error on unimplemented tracker types" {
     const allocator = std.testing.allocator;
     var factory = Factory.init(allocator);
+    var loop: xev.Loop = undefined;
 
-    try std.testing.expectError(Factory.Errors.InvalidTrackerType, factory.get(.http));
+    try std.testing.expectError(
+        Factory.Errors.InvalidTrackerType,
+        factory.get(.http, logAnnounceCb, &loop),
+    );
 }
 
 test "does not return error when called for udp tracker" {
@@ -60,5 +80,7 @@ test "does not return error when called for udp tracker" {
     var factory = Factory.init(allocator);
     defer factory.deinit();
 
-    _ = try factory.get(.udp);
+    var loop: xev.Loop = undefined;
+    _ = try factory.get(.udp, logAnnounceCb, &loop);
+    // try tracker.announce(undefined);
 }
