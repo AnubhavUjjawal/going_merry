@@ -2,12 +2,17 @@
 /// The callback is to be provided when creating the Tracker. callback is expected to be called
 /// whenever a response is recieved from announce.
 /// See: `factory.zig`
-pub const Tracker = struct {
+pub const Client = struct {
     ptr: *anyopaque,
     _announceFn: AnnounceFunction,
+    _deinit: DeinitFunction,
 
-    pub fn announce(self: Tracker, data: AnnounceRequest) !void {
+    pub fn announce(self: Client, data: *AnnounceRequest) !void {
         return self._announceFn(self.ptr, data);
+    }
+
+    pub fn deinit(self: Client) void {
+        return self._deinit(self.ptr);
     }
 
     pub const Event = enum {
@@ -63,10 +68,10 @@ pub const Tracker = struct {
 
         /// An additional identification that is not shared with any other peers. It is intended to allow a client to
         /// prove their identity should their IP address change.
-        key: ?i32,
+        key: ?i32 = null,
 
         /// Optional. If a previous announce contained a tracker id, it should be set here.
-        tracker_id: ?i32,
+        tracker_id: ?i32 = null,
     };
 
     pub const Peer = struct {
@@ -106,6 +111,7 @@ pub const Tracker = struct {
         peers: ?[]Peer,
     };
 
-    pub const AnnounceFunctionCallback = *const fn (data: AnnounceResponse) anyerror!void;
-    pub const AnnounceFunction = *const fn (ptr: *anyopaque, data: AnnounceRequest) anyerror!void;
+    pub const AnnounceFunctionCallback = *const fn (data: *AnnounceResponse) anyerror!void;
+    pub const AnnounceFunction = *const fn (ptr: *anyopaque, data: *AnnounceRequest) anyerror!void;
+    pub const DeinitFunction = *const fn (ptr: *anyopaque) void;
 };
